@@ -1,7 +1,7 @@
 {
   "domain": "jeedom_bridge",
   "name": "Jeedom Bridge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "codeowners": [],
   "config_flow": true,
   "documentation": "https://github.com/your-repo/jeedom_bridge",
