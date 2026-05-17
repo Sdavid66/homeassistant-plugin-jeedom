@@ -1,0 +1,22 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Jeedom Bridge — Connexion",
+        "description": "Entrez l'URL et la clé API de votre instance Jeedom.",
+        "data": {
+          "jeedom_url": "URL Jeedom (ex: http://192.168.1.50)",
+          "api_key": "Clé API globale Jeedom"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de se connecter à Jeedom. Vérifiez l'URL et que le serveur est accessible.",
+      "invalid_auth": "Clé API invalide ou refusée par Jeedom.",
+      "unknown": "Erreur inattendue. Consultez les logs Home Assistant pour plus de détails."
+    },
+    "abort": {
+      "already_configured": "Cette instance Jeedom est déjà configurée."
+    }
+  }
+}

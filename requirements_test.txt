@@ -1,0 +1,6 @@
+# Jeedom Bridge — Custom Component for Home Assistant
+# Installation : copiez le dossier custom_components/jeedom_bridge/
+# dans votre dossier config/custom_components/ de Home Assistant.
+
+# Tests (nécessite pytest-homeassistant-custom-component)
+pytest-homeassistant-custom-component
