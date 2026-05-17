@@ -61,7 +61,7 @@ class JeedomDevice:
         self.name = name
         self.is_active = is_active
         self.plugin_id = plugin_id.lower()
-        self.category = category.lower()
+        self.category = str(category).lower()
         self.cmd_on_id = cmd_on_id
         self.cmd_off_id = cmd_off_id
         self.cmd_state_id = cmd_state_id
@@ -131,8 +131,17 @@ def _parse_eqlogic(raw: dict[str, Any]) -> JeedomDevice | None:
         name: str = raw.get("name", f"Device {eq_id}")
         is_active: bool = str(raw.get("isEnable", "1")) == "1"
         plugin_id: str = raw.get("eqType_name", "") or raw.get("plugin", "") or ""
-        # Jeedom categories may differ across versions
-        category: str = raw.get("category", "") or raw.get("tags", "") or ""
+        # Jeedom categories may differ across versions.
+        # In some Jeedom v3 builds, 'category' is returned as a dict
+        # (e.g. {"light": "1", "heating": "0"}) rather than a plain string.
+        _raw_cat = raw.get("category", "") or raw.get("tags", "") or ""
+        if isinstance(_raw_cat, dict):
+            # Pick the first enabled category key, or empty string
+            category: str = next(
+                (k for k, v in _raw_cat.items() if str(v) == "1"), ""
+            )
+        else:
+            category: str = _raw_cat
 
         cmds: list[dict[str, Any]] = raw.get("cmds", [])
 
