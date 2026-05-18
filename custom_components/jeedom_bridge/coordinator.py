@@ -98,6 +98,35 @@ class JeedomDevice:
 # Parsing helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _find_cmd_by_generic(
+    cmds: list[dict[str, Any]],
+    *generic_types: str,
+    cmd_type: str | None = None,
+    subtype: str | None = None,
+) -> str | None:
+    """
+    Find a command whose ``generic_type`` matches one of the given values.
+    Optionally filter by ``type`` (action/info) and ``subType``.
+    This is the PRIMARY lookup method — Jeedom stores intent in generic_type.
+    """
+    if not isinstance(cmds, list):
+        return None
+    wanted = {g.upper() for g in generic_types}
+    for cmd in cmds:
+        try:
+            gt = str(cmd.get("generic_type") or "").upper()
+            if gt not in wanted:
+                continue
+            if cmd_type and cmd.get("type", "").lower() != cmd_type:
+                continue
+            if subtype and cmd.get("subType", "").lower() != subtype:
+                continue
+            return str(cmd["id"])
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
 def _find_cmd(
     cmds: list[dict[str, Any]],
     cmd_type: str,
@@ -105,9 +134,8 @@ def _find_cmd(
     subtype: str | None = None,
 ) -> str | None:
     """
-    Look for a command matching *type*, optional *subtype*, and one of the given *names*.
-    Both the command ``name`` and ``logicalId`` are tested (case-insensitive).
-    Returns the command ID as a string, or None.
+    Fallback: find a command by matching ``name`` or ``logicalId`` (case-insensitive).
+    Use _find_cmd_by_generic() first when possible.
     """
     if not isinstance(cmds, list):
         return None
@@ -131,19 +159,24 @@ def _find_cmd_fallback_first(
     cmds: list[dict[str, Any]],
     cmd_type: str,
     skip_id: str | None = None,
+    exclude_generic: set[str] | None = None,
 ) -> str | None:
     """
-    Fallback: return the first action command of *cmd_type* whose ID is not *skip_id*.
-    Used when no named match was found (e.g. device uses custom command names).
+    Last-resort fallback: first action command that is not already assigned.
+    Skips commands whose generic_type is in *exclude_generic* (e.g. "DONT", "BATTERY").
     """
     if not isinstance(cmds, list):
         return None
+    excluded = {g.upper() for g in (exclude_generic or set())}
     for cmd in cmds:
         try:
             if cmd.get("type", "").lower() != cmd_type:
                 continue
             cmd_id = str(cmd["id"])
             if skip_id is not None and cmd_id == skip_id:
+                continue
+            gt = str(cmd.get("generic_type") or "").upper()
+            if gt in excluded:
                 continue
             return cmd_id
         except Exception:  # noqa: BLE001
@@ -195,7 +228,7 @@ def _parse_eqlogic(
                 "eqLogic %s (%s): %d cmd(s): %s",
                 eq_id, name,
                 len(cmds),
-                [(c.get("name"), c.get("logicalId"), c.get("type")) for c in cmds],
+                [(c.get("name"), c.get("generic_type"), c.get("type"), c.get("subType")) for c in cmds],
             )
         else:
             _LOGGER.info(
@@ -203,59 +236,94 @@ def _parse_eqlogic(
                 eq_id, name,
             )
 
-        # ── ON command ───────────────────────────────────────────────────────
-        # Named match: standard Jeedom command names and logicalIds
-        cmd_on_id = _find_cmd(
-            cmds, CMD_TYPE_ACTION,
-            # logicalIds used by edisio, zwave, virtuel
-            "1", "on", "true",
-            # French names
-            "allumer", "marche", "ouvrir", "ouverture",
-            # English variants
-            "open", "start", "enable", "run",
+        # ── ON command ──────────────────────────────────────────────────────────
+        # Priority 1: generic_type (most reliable — set by Jeedom plugin)
+        cmd_on_id = _find_cmd_by_generic(
+            cmds,
+            "LIGHT_ON", "ENERGY_ON", "FLAP_UP",
+            "CAMERA_UP", "BARRIER_UP",
+            cmd_type=CMD_TYPE_ACTION,
         )
-        # Fallback: use the very first action command if nothing matched
+        # Priority 2: name or logicalId match
         if cmd_on_id is None:
-            cmd_on_id = _find_cmd_fallback_first(cmds, CMD_TYPE_ACTION)
+            cmd_on_id = _find_cmd(
+                cmds, CMD_TYPE_ACTION,
+                "on", "1", "true",
+                "allumer", "marche", "ouvrir", "ouverture",
+                "open", "start", "enable",
+            )
+        # Priority 3: first available action command
+        if cmd_on_id is None:
+            cmd_on_id = _find_cmd_fallback_first(
+                cmds, CMD_TYPE_ACTION,
+                exclude_generic={"DONT", "BATTERY", "REFRESH"},
+            )
             if cmd_on_id:
                 _LOGGER.debug(
-                    "eqLogic %s (%s): no named ON cmd — using first action cmd %s as ON",
+                    "eqLogic %s (%s): no generic_type/named ON cmd — using first action cmd %s",
                     eq_id, name, cmd_on_id,
                 )
 
-        # ── OFF command ──────────────────────────────────────────────────────
-        cmd_off_id = _find_cmd(
-            cmds, CMD_TYPE_ACTION,
-            # logicalIds used by edisio, zwave, virtuel
-            "0", "off", "false",
-            # French names
-            "éteindre", "eteindre", "arrêt", "arret", "fermer", "fermeture",
-            # English variants
-            "close", "stop", "disable",
+        # ── OFF command ─────────────────────────────────────────────────────────
+        # Priority 1: generic_type
+        cmd_off_id = _find_cmd_by_generic(
+            cmds,
+            "LIGHT_OFF", "ENERGY_OFF", "FLAP_DOWN",
+            "CAMERA_DOWN", "BARRIER_DOWN",
+            cmd_type=CMD_TYPE_ACTION,
         )
-        # Fallback: use the second action command if nothing matched
+        # Priority 2: name or logicalId match
         if cmd_off_id is None:
-            cmd_off_id = _find_cmd_fallback_first(cmds, CMD_TYPE_ACTION, skip_id=cmd_on_id)
+            cmd_off_id = _find_cmd(
+                cmds, CMD_TYPE_ACTION,
+                "off", "0", "false",
+                "éteindre", "eteindre", "arrêt", "arret", "fermer", "fermeture",
+                "close", "stop", "disable",
+            )
+        # Priority 3: second available action command
+        if cmd_off_id is None:
+            cmd_off_id = _find_cmd_fallback_first(
+                cmds, CMD_TYPE_ACTION,
+                skip_id=cmd_on_id,
+                exclude_generic={"DONT", "BATTERY", "REFRESH"},
+            )
             if cmd_off_id:
                 _LOGGER.debug(
-                    "eqLogic %s (%s): no named OFF cmd — using second action cmd %s as OFF",
+                    "eqLogic %s (%s): no generic_type/named OFF cmd — using second action cmd %s",
                     eq_id, name, cmd_off_id,
                 )
 
-        # ── STATE command ──────────────────────────────────────────────────
-        cmd_state_id = _find_cmd(
-            cmds, CMD_TYPE_INFO,
-            "état", "etat", "state", "statut", "status",
-            "valeur", "value", "niveau", "level",
+        # ── STATE command ────────────────────────────────────────────────────────
+        # Priority 1: generic_type
+        cmd_state_id = _find_cmd_by_generic(
+            cmds,
+            "LIGHT_STATE", "ENERGY_STATE", "FLAP_STATE",
+            "SWITCH_STATE", "BARRIER_STATE",
+            cmd_type=CMD_TYPE_INFO,
         )
+        # Priority 2: name match
+        if cmd_state_id is None:
+            cmd_state_id = _find_cmd(
+                cmds, CMD_TYPE_INFO,
+                "état", "etat", "state", "statut", "status",
+                "valeur", "value", "niveau", "level",
+            )
 
-        # ── SLIDER command ─────────────────────────────────────────────────
-        cmd_slider_id = _find_cmd(
-            cmds, CMD_TYPE_ACTION,
-            "intensity", "intensité", "luminosité", "luminosite",
-            "slider", "dim", "dimmer", "level", "niveau",
-            subtype=CMD_SUBTYPE_SLIDER
+        # ── SLIDER command ───────────────────────────────────────────────────────
+        # Priority 1: generic_type
+        cmd_slider_id = _find_cmd_by_generic(
+            cmds,
+            "LIGHT_SLIDER", "LIGHT_SET_BRIGHTNESS", "SET_LEVEL",
+            cmd_type=CMD_TYPE_ACTION, subtype=CMD_SUBTYPE_SLIDER,
         )
+        # Priority 2: name/subtype match
+        if cmd_slider_id is None:
+            cmd_slider_id = _find_cmd(
+                cmds, CMD_TYPE_ACTION,
+                "intensity", "intensité", "luminosité", "luminosite",
+                "slider", "dim", "dimmer", "level", "niveau",
+                subtype=CMD_SUBTYPE_SLIDER,
+            )
 
         # Derive initial state from info commands
         current_state = "0"
