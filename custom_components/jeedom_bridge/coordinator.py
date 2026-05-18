@@ -35,12 +35,20 @@ class JeedomDevice:
         "is_active",
         "plugin_id",
         "category",
+        # light / switch commands
         "cmd_on_id",
         "cmd_off_id",
         "cmd_state_id",
         "cmd_slider_id",
-        "current_state",      # "1" / "0" or numeric string
+        # cover (volets/stores) commands
+        "cmd_open_id",
+        "cmd_close_id",
+        "cmd_cover_state_id",
+        # state
+        "current_state",
         "supports_brightness",
+        # classification hint from generic_type
+        "is_cover_device",
     )
 
     def __init__(
@@ -56,6 +64,10 @@ class JeedomDevice:
         cmd_slider_id: str | None,
         current_state: str,
         supports_brightness: bool,
+        cmd_open_id: str | None = None,
+        cmd_close_id: str | None = None,
+        cmd_cover_state_id: str | None = None,
+        is_cover_device: bool = False,
     ) -> None:
         self.eq_id = eq_id
         self.name = name
@@ -66,23 +78,39 @@ class JeedomDevice:
         self.cmd_off_id = cmd_off_id
         self.cmd_state_id = cmd_state_id
         self.cmd_slider_id = cmd_slider_id
+        self.cmd_open_id = cmd_open_id
+        self.cmd_close_id = cmd_close_id
+        self.cmd_cover_state_id = cmd_cover_state_id
         self.current_state = current_state
         self.supports_brightness = supports_brightness
+        self.is_cover_device = is_cover_device
+
+    @property
+    def is_cover(self) -> bool:
+        """True if this device is a cover (volet/store/barrier)."""
+        return self.is_cover_device and (
+            self.cmd_open_id is not None or self.cmd_close_id is not None
+        )
 
     @property
     def is_light(self) -> bool:
         """Return True if this device should be mapped to a LightEntity."""
+        if self.is_cover:
+            return False
         return (
-            self.plugin_id in LIGHT_PLUGINS
-            or self.category in LIGHT_CATEGORIES
-            or (self.cmd_on_id is not None and self.cmd_off_id is not None and self.cmd_slider_id is not None)
+            self.category in LIGHT_CATEGORIES
+            # openzwave/edisio lights detected via category; virtual mirrors them
+            or self.plugin_id in {"openzwave", "edisio"} and self.category in LIGHT_CATEGORIES
+            # has a brightness slider → definitely a dimmable light
+            or self.cmd_slider_id is not None
         )
 
     @property
     def is_switch(self) -> bool:
-        """Return True if this device should be mapped to a SwitchEntity (on/off only)."""
+        """True if on/off device that is neither a light nor a cover."""
         return (
             not self.is_light
+            and not self.is_cover
             and self.cmd_on_id is not None
             and self.cmd_off_id is not None
         )
@@ -90,7 +118,8 @@ class JeedomDevice:
     def __repr__(self) -> str:  # pragma: no cover
         return (
             f"<JeedomDevice id={self.eq_id!r} name={self.name!r} "
-            f"plugin={self.plugin_id!r} is_light={self.is_light}>"
+            f"plugin={self.plugin_id!r} light={self.is_light} "
+            f"switch={self.is_switch} cover={self.is_cover}>"
         )
 
 
@@ -325,10 +354,45 @@ def _parse_eqlogic(
                 subtype=CMD_SUBTYPE_SLIDER,
             )
 
+        # ── COVER commands (volets/stores) ────────────────────────────────────────
+        # Detected by FLAP/BARRIER generic_types. These are mutually exclusive
+        # with the on/off commands above (same hardware cmd).
+        cmd_open_id = _find_cmd_by_generic(
+            cmds, "FLAP_UP", "BARRIER_UP", "CAMERA_UP",
+            cmd_type=CMD_TYPE_ACTION,
+        )
+        if cmd_open_id is None:
+            cmd_open_id = _find_cmd(
+                cmds, CMD_TYPE_ACTION,
+                "haut", "up", "ouvrir", "open", "monter",
+            )
+
+        cmd_close_id = _find_cmd_by_generic(
+            cmds, "FLAP_DOWN", "BARRIER_DOWN", "CAMERA_DOWN",
+            cmd_type=CMD_TYPE_ACTION,
+        )
+        if cmd_close_id is None:
+            cmd_close_id = _find_cmd(
+                cmds, CMD_TYPE_ACTION,
+                "bas", "down", "fermer", "close", "descendre",
+            )
+
+        cmd_cover_state_id = _find_cmd_by_generic(
+            cmds, "FLAP_STATE", "BARRIER_STATE",
+            cmd_type=CMD_TYPE_INFO,
+        )
+
+        # A device is a cover if it has FLAP generic types,
+        # even if on/off commands were also matched.
+        is_cover_device = (
+            cmd_open_id is not None or cmd_close_id is not None
+        ) and _find_cmd_by_generic(cmds, "FLAP_UP", "FLAP_DOWN", "BARRIER_UP", "BARRIER_DOWN") is not None
+
         # Derive initial state from info commands
         current_state = "0"
+        state_cmd_id = cmd_cover_state_id or cmd_state_id
         for cmd in cmds:
-            if str(cmd.get("id")) == cmd_state_id:
+            if str(cmd.get("id")) == state_cmd_id:
                 current_state = str(cmd.get("currentValue", "0"))
                 break
 
@@ -346,6 +410,10 @@ def _parse_eqlogic(
             cmd_slider_id=cmd_slider_id,
             current_state=current_state,
             supports_brightness=supports_brightness,
+            cmd_open_id=cmd_open_id,
+            cmd_close_id=cmd_close_id,
+            cmd_cover_state_id=cmd_cover_state_id,
+            is_cover_device=is_cover_device,
         )
     except Exception as err:  # noqa: BLE001  — catch-all: never crash the coordinator
         _LOGGER.warning(

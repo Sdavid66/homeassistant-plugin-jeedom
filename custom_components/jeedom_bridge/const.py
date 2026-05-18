@@ -26,7 +26,7 @@ METHOD_CMD_GETVALUE = "cmd::byId"
 METHOD_CMD_BY_EQLOGIC = "cmd::byEqLogicId"  # fetch all cmds of a given eqLogic
 
 # ── Platform list ─────────────────────────────────────────────────────────────
-PLATFORMS = ["light", "switch"]
+PLATFORMS = ["light", "switch", "cover"]
 
 # ── Command type identifiers (Jeedom) ─────────────────────────────────────────
 CMD_TYPE_ACTION = "action"
