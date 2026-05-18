@@ -249,12 +249,32 @@ class JeedomCoordinator(DataUpdateCoordinator[dict[str, JeedomDevice]]):
         except JeedomApiError as err:
             raise UpdateFailed(f"Jeedom API error: {err}") from err
 
+        _LOGGER.debug(
+            "eqLogic::all returned %d raw eqLogic(s)", len(raw_list)
+        )
+
+        # Detect whether Jeedom includes cmds inline or we need to fetch them
+        # separately (some Jeedom versions/configs omit cmds from eqLogic::all).
+        raw_list = await self._enrich_cmds(raw_list, self.api)
+
         devices: dict[str, JeedomDevice] = {}
         for raw in raw_list:
             try:
                 device = _parse_eqlogic(raw)
-                if device is not None and self._is_usable(device):
+                if device is None:
+                    continue
+                usable, reason = self._is_usable(device)
+                if usable:
                     devices[device.eq_id] = device
+                    _LOGGER.debug(
+                        "  ✓ %s (%s) — plugin=%s light=%s switch=%s",
+                        device.name, device.eq_id,
+                        device.plugin_id, device.is_light, device.is_switch,
+                    )
+                else:
+                    _LOGGER.debug(
+                        "  ✗ %s (%s) skipped: %s", device.name, device.eq_id, reason
+                    )
             except Exception:  # noqa: BLE001
                 _LOGGER.warning(
                     "Skipping malformed eqLogic entry: %s", raw.get("id", "?"),
@@ -272,13 +292,23 @@ class JeedomCoordinator(DataUpdateCoordinator[dict[str, JeedomDevice]]):
                 )
                 continue
 
+            _LOGGER.debug("Plugin '%s': %d raw eqLogic(s) received", plugin_id, len(plugin_raws))
+            plugin_raws = await self._enrich_cmds(plugin_raws, plugin_client)
+
             new_count = 0
             for raw in plugin_raws:
                 try:
                     device = _parse_eqlogic(raw, forced_plugin_id=plugin_id)
-                    if device is not None and self._is_usable(device):
-                        devices[device.eq_id] = device
-                        new_count += 1
+                    if device is not None:
+                        usable, reason = self._is_usable(device)
+                        if usable:
+                            devices[device.eq_id] = device
+                            new_count += 1
+                        else:
+                            _LOGGER.debug(
+                                "  Plugin '%s' ✗ %s (%s) skipped: %s",
+                                plugin_id, device.name, device.eq_id, reason,
+                            )
                 except Exception:  # noqa: BLE001
                     _LOGGER.warning(
                         "Plugin '%s': skipping malformed entry %s",
@@ -288,19 +318,56 @@ class JeedomCoordinator(DataUpdateCoordinator[dict[str, JeedomDevice]]):
                 "Plugin '%s': %d usable device(s) loaded", plugin_id, new_count
             )
 
-        _LOGGER.debug("Coordinator updated: %d controllable devices found", len(devices))
+        _LOGGER.debug("Coordinator updated: %d controllable device(s) found", len(devices))
         return devices
 
+    async def _enrich_cmds(
+        self,
+        raw_list: list[dict[str, Any]],
+        client: Any,
+    ) -> list[dict[str, Any]]:
+        """
+        If any eqLogic in *raw_list* has an empty or missing 'cmds' field,
+        fetch commands via cmd::byEqLogicId and inject them.
+        Returns the enriched list.
+        """
+        needs_fetch = any(
+            not raw.get("cmds")
+            for raw in raw_list
+            if isinstance(raw, dict)
+        )
+
+        if not needs_fetch:
+            return raw_list  # cmds already present — nothing to do
+
+        _LOGGER.debug(
+            "cmds missing from eqLogic payload — fetching via cmd::byEqLogicId"
+        )
+        enriched = []
+        for raw in raw_list:
+            if not isinstance(raw, dict):
+                enriched.append(raw)
+                continue
+            if not raw.get("cmds"):
+                eq_id = raw.get("id")
+                if eq_id and hasattr(client, "async_get_cmds_by_eqlogic"):
+                    cmds = await client.async_get_cmds_by_eqlogic(eq_id)
+                    raw = {**raw, "cmds": cmds}  # non-destructive copy
+                    _LOGGER.debug(
+                        "  eqLogic %s: fetched %d cmd(s) separately",
+                        eq_id, len(cmds),
+                    )
+            enriched.append(raw)
+        return enriched
+
     @staticmethod
-    def _is_usable(device: JeedomDevice) -> bool:
-        """Return True if the device should be exposed as an entity."""
+    def _is_usable(device: JeedomDevice) -> tuple[bool, str]:
+        """
+        Return (True, "") if the device should be exposed as an entity,
+        or (False, reason) explaining why it was skipped.
+        """
         if not device.is_active:
-            _LOGGER.debug("Skipping inactive device %s (%s)", device.eq_id, device.name)
-            return False
-        if device.cmd_on_id is None and device.cmd_off_id is None:
-            _LOGGER.debug(
-                "Skipping device %s (%s): no on/off commands found",
-                device.eq_id, device.name,
-            )
-            return False
-        return True
+            return False, "inactive (isEnable != 1)"
+        if device.cmd_on_id is not None or device.cmd_off_id is not None:
+            return True, ""  # has at least one on/off command
+        return False, "no on/off commands found"

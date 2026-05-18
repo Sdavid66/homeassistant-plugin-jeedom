@@ -11,6 +11,7 @@ from .const import (
     JEEDOM_API_VERSION,
     METHOD_EQLOGIC_ALL,
     METHOD_CMD_EXECUTE,
+    METHOD_CMD_BY_EQLOGIC,
     CONF_PLUGIN_KEY_EDISIO,
     CONF_PLUGIN_KEY_ZWAVE,
     CONF_PLUGIN_KEY_VIRTUEL,
@@ -119,6 +120,23 @@ class JeedomApiClient:
         result = await self._request(METHOD_EQLOGIC_ALL)
         if not isinstance(result, list):
             _LOGGER.warning("eqLogic::all returned unexpected type: %s", type(result))
+            return []
+        return result
+
+    async def async_get_cmds_by_eqlogic(self, eq_id: str | int) -> list[dict[str, Any]]:
+        """
+        Fetch all commands for a specific eqLogic by its ID.
+        Used when eqLogic::all returns devices without their cmds array.
+        """
+        try:
+            result = await self._request(
+                METHOD_CMD_BY_EQLOGIC,
+                extra_params={"eqLogicId": str(eq_id)},
+            )
+        except (JeedomApiError, JeedomConnectionError, JeedomAuthError) as err:
+            _LOGGER.warning("Cannot fetch cmds for eqLogic %s: %s", eq_id, err)
+            return []
+        if not isinstance(result, list):
             return []
         return result
 
