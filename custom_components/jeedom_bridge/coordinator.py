@@ -390,10 +390,21 @@ def _parse_eqlogic(
 
         # Derive initial state from info commands
         current_state = "0"
-        state_cmd_id = cmd_cover_state_id or cmd_state_id
+        state_cmd_id = cmd_cover_state_id or cmd_state_id or cmd_slider_id
+        
         for cmd in cmds:
             if str(cmd.get("id")) == state_cmd_id:
-                current_state = str(cmd.get("currentValue", "0"))
+                # Jeedom can store the state in various fields depending on version/plugin
+                val = cmd.get("currentValue")
+                if val is None:
+                    val = cmd.get("state")
+                if val is None:
+                    val = cmd.get("value")
+                if val is None and isinstance(cmd.get("display"), dict):
+                    val = cmd["display"].get("state")
+                
+                if val is not None and val != "":
+                    current_state = str(val)
                 break
 
         supports_brightness = cmd_slider_id is not None
