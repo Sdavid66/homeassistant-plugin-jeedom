@@ -106,6 +106,7 @@ def _find_cmd(
 ) -> str | None:
     """
     Look for a command matching *type*, optional *subtype*, and one of the given *names*.
+    Both the command ``name`` and ``logicalId`` are tested (case-insensitive).
     Returns the command ID as a string, or None.
     """
     if not isinstance(cmds, list):
@@ -117,10 +118,34 @@ def _find_cmd(
                 continue
             if subtype and cmd.get("subType", "").lower() != subtype:
                 continue
-            logical_id = cmd.get("logicalId", "").lower()
-            cmd_name = cmd.get("name", "").lower()
+            logical_id = str(cmd.get("logicalId", "")).lower()
+            cmd_name = str(cmd.get("name", "")).lower()
             if logical_id in names_lower or cmd_name in names_lower:
                 return str(cmd["id"])
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def _find_cmd_fallback_first(
+    cmds: list[dict[str, Any]],
+    cmd_type: str,
+    skip_id: str | None = None,
+) -> str | None:
+    """
+    Fallback: return the first action command of *cmd_type* whose ID is not *skip_id*.
+    Used when no named match was found (e.g. device uses custom command names).
+    """
+    if not isinstance(cmds, list):
+        return None
+    for cmd in cmds:
+        try:
+            if cmd.get("type", "").lower() != cmd_type:
+                continue
+            cmd_id = str(cmd["id"])
+            if skip_id is not None and cmd_id == skip_id:
+                continue
+            return cmd_id
         except Exception:  # noqa: BLE001
             continue
     return None
@@ -161,13 +186,75 @@ def _parse_eqlogic(
             category: str = _raw_cat
 
         cmds: list[dict[str, Any]] = raw.get("cmds", [])
+        if not cmds:
+            cmds = []
 
-        cmd_on_id = _find_cmd(cmds, CMD_TYPE_ACTION, "on", "allumer", "marche")
-        cmd_off_id = _find_cmd(cmds, CMD_TYPE_ACTION, "off", "éteindre", "eteindre", "arrêt", "arret")
-        cmd_state_id = _find_cmd(cmds, CMD_TYPE_INFO, "état", "etat", "state", "statut")
+        # ── Log what Jeedom returned so we can diagnose issues ────────────────
+        if cmds:
+            _LOGGER.debug(
+                "eqLogic %s (%s): %d cmd(s): %s",
+                eq_id, name,
+                len(cmds),
+                [(c.get("name"), c.get("logicalId"), c.get("type")) for c in cmds],
+            )
+        else:
+            _LOGGER.info(
+                "eqLogic %s (%s): no commands found — device will be skipped",
+                eq_id, name,
+            )
+
+        # ── ON command ───────────────────────────────────────────────────────
+        # Named match: standard Jeedom command names and logicalIds
+        cmd_on_id = _find_cmd(
+            cmds, CMD_TYPE_ACTION,
+            # logicalIds used by edisio, zwave, virtuel
+            "1", "on", "true",
+            # French names
+            "allumer", "marche", "ouvrir", "ouverture",
+            # English variants
+            "open", "start", "enable", "run",
+        )
+        # Fallback: use the very first action command if nothing matched
+        if cmd_on_id is None:
+            cmd_on_id = _find_cmd_fallback_first(cmds, CMD_TYPE_ACTION)
+            if cmd_on_id:
+                _LOGGER.debug(
+                    "eqLogic %s (%s): no named ON cmd — using first action cmd %s as ON",
+                    eq_id, name, cmd_on_id,
+                )
+
+        # ── OFF command ──────────────────────────────────────────────────────
+        cmd_off_id = _find_cmd(
+            cmds, CMD_TYPE_ACTION,
+            # logicalIds used by edisio, zwave, virtuel
+            "0", "off", "false",
+            # French names
+            "éteindre", "eteindre", "arrêt", "arret", "fermer", "fermeture",
+            # English variants
+            "close", "stop", "disable",
+        )
+        # Fallback: use the second action command if nothing matched
+        if cmd_off_id is None:
+            cmd_off_id = _find_cmd_fallback_first(cmds, CMD_TYPE_ACTION, skip_id=cmd_on_id)
+            if cmd_off_id:
+                _LOGGER.debug(
+                    "eqLogic %s (%s): no named OFF cmd — using second action cmd %s as OFF",
+                    eq_id, name, cmd_off_id,
+                )
+
+        # ── STATE command ──────────────────────────────────────────────────
+        cmd_state_id = _find_cmd(
+            cmds, CMD_TYPE_INFO,
+            "état", "etat", "state", "statut", "status",
+            "valeur", "value", "niveau", "level",
+        )
+
+        # ── SLIDER command ─────────────────────────────────────────────────
         cmd_slider_id = _find_cmd(
-            cmds, CMD_TYPE_ACTION, "intensity", "intensité", "luminosité", "luminosite",
-            "slider", "dim", "dimmer", "level", subtype=CMD_SUBTYPE_SLIDER
+            cmds, CMD_TYPE_ACTION,
+            "intensity", "intensité", "luminosité", "luminosite",
+            "slider", "dim", "dimmer", "level", "niveau",
+            subtype=CMD_SUBTYPE_SLIDER
         )
 
         # Derive initial state from info commands
