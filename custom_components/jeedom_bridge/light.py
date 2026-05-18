@@ -150,6 +150,20 @@ class JeedomLightEntity(CoordinatorEntity[JeedomCoordinator], LightEntity):
         """Mirror coordinator availability."""
         return self.coordinator.last_update_success and self._current_device is not None
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose Jeedom metadata as entity attributes (visible in HA dev tools)."""
+        dev = self._current_device or self._device
+        return {
+            "jeedom_name": dev.name,
+            "jeedom_id": dev.eq_id,
+            "plugin": dev.plugin_id,
+            "category": dev.category,
+            "cmd_on_id": dev.cmd_on_id,
+            "cmd_off_id": dev.cmd_off_id,
+            "cmd_state_id": dev.cmd_state_id,
+        }
+
     # ── Control methods ───────────────────────────────────────────────────────
 
     async def async_turn_on(self, **kwargs: Any) -> None:
