@@ -21,7 +21,7 @@ JEEDOM_API_VERSION = "2.0"
 
 # Methods
 METHOD_EQLOGIC_ALL = "eqLogic::all"
-METHOD_CMD_EXECUTE = "cmd::execute"
+METHOD_CMD_EXECUTE = "cmd::execCmd"
 METHOD_CMD_GETVALUE = "cmd::byId"
 METHOD_CMD_BY_EQLOGIC = "cmd::byEqLogicId"  # fetch all cmds of a given eqLogic
 
