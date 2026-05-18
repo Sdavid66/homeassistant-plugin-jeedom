@@ -108,16 +108,21 @@ def _find_cmd(
     Look for a command matching *type*, optional *subtype*, and one of the given *names*.
     Returns the command ID as a string, or None.
     """
+    if not isinstance(cmds, list):
+        return None
     names_lower = {n.lower() for n in names}
     for cmd in cmds:
-        if cmd.get("type", "").lower() != cmd_type:
+        try:
+            if cmd.get("type", "").lower() != cmd_type:
+                continue
+            if subtype and cmd.get("subType", "").lower() != subtype:
+                continue
+            logical_id = cmd.get("logicalId", "").lower()
+            cmd_name = cmd.get("name", "").lower()
+            if logical_id in names_lower or cmd_name in names_lower:
+                return str(cmd["id"])
+        except Exception:  # noqa: BLE001
             continue
-        if subtype and cmd.get("subType", "").lower() != subtype:
-            continue
-        logical_id = cmd.get("logicalId", "").lower()
-        cmd_name = cmd.get("name", "").lower()
-        if logical_id in names_lower or cmd_name in names_lower:
-            return str(cmd["id"])
     return None
 
 
@@ -187,8 +192,11 @@ def _parse_eqlogic(
             current_state=current_state,
             supports_brightness=supports_brightness,
         )
-    except (KeyError, TypeError, ValueError) as err:
-        _LOGGER.warning("Failed to parse eqLogic %s: %s", raw.get("id", "?"), err)
+    except Exception as err:  # noqa: BLE001  — catch-all: never crash the coordinator
+        _LOGGER.warning(
+            "Failed to parse eqLogic %s: %s (%s)",
+            raw.get("id", "?"), err, type(err).__name__,
+        )
         return None
 
 
@@ -221,6 +229,18 @@ class JeedomCoordinator(DataUpdateCoordinator[dict[str, JeedomDevice]]):
 
     async def _async_update_data(self) -> dict[str, JeedomDevice]:
         """Fetch devices from the global API and all configured plugin APIs."""
+        try:
+            return await self._fetch_all_devices()
+        except UpdateFailed:
+            raise
+        except Exception as err:  # noqa: BLE001
+            # Safety net: convert any unexpected exception so HA never receives
+            # a raw exception from the coordinator (which could destabilise HA).
+            _LOGGER.exception("Unexpected error in Jeedom coordinator")
+            raise UpdateFailed(f"Unexpected coordinator error: {err}") from err
+
+    async def _fetch_all_devices(self) -> dict[str, JeedomDevice]:
+        """Internal fetch — may raise UpdateFailed only."""
         # ── 1. Global Jeedom API ──────────────────────────────────────────────
         try:
             raw_list = await self.api.async_get_all_eqlogics()
@@ -231,22 +251,39 @@ class JeedomCoordinator(DataUpdateCoordinator[dict[str, JeedomDevice]]):
 
         devices: dict[str, JeedomDevice] = {}
         for raw in raw_list:
-            device = _parse_eqlogic(raw)
-            if device is not None and self._is_usable(device):
-                devices[device.eq_id] = device
+            try:
+                device = _parse_eqlogic(raw)
+                if device is not None and self._is_usable(device):
+                    devices[device.eq_id] = device
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Skipping malformed eqLogic entry: %s", raw.get("id", "?"),
+                    exc_info=True,
+                )
 
-        # ── 2. Plugin-specific APIs (non-blocking) ────────────────────────────
+        # ── 2. Plugin-specific APIs (non-blocking per plugin) ─────────────────
         for plugin_id, plugin_client in self.plugin_clients.items():
-            plugin_raws = await plugin_client.async_get_plugin_eqlogics()
+            try:
+                plugin_raws = await plugin_client.async_get_plugin_eqlogics()
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Plugin '%s': unexpected error fetching eqLogics — skipped",
+                    plugin_id, exc_info=True,
+                )
+                continue
+
             new_count = 0
             for raw in plugin_raws:
-                # Force the plugin_id so categorisation is always correct
-                device = _parse_eqlogic(raw, forced_plugin_id=plugin_id)
-                if device is not None and self._is_usable(device):
-                    # Plugin API may return devices already present in global API;
-                    # plugin version wins (richer data / correct plugin tag).
-                    devices[device.eq_id] = device
-                    new_count += 1
+                try:
+                    device = _parse_eqlogic(raw, forced_plugin_id=plugin_id)
+                    if device is not None and self._is_usable(device):
+                        devices[device.eq_id] = device
+                        new_count += 1
+                except Exception:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Plugin '%s': skipping malformed entry %s",
+                        plugin_id, raw.get("id", "?"), exc_info=True,
+                    )
             _LOGGER.debug(
                 "Plugin '%s': %d usable device(s) loaded", plugin_id, new_count
             )
