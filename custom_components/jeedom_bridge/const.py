@@ -12,8 +12,10 @@ CONF_PLUGIN_KEY_EDISIO  = "plugin_key_edisio"
 CONF_PLUGIN_KEY_ZWAVE   = "plugin_key_zwave"
 CONF_PLUGIN_KEY_VIRTUEL = "plugin_key_virtuel"
 
+CONF_SCAN_INTERVAL = "scan_interval"
+
 # ── Defaults ──────────────────────────────────────────────────────────────────
-DEFAULT_SCAN_INTERVAL = 30  # seconds
+DEFAULT_SCAN_INTERVAL = 900  # seconds (15 minutes)
 
 # ── Jeedom API ────────────────────────────────────────────────────────────────
 JEEDOM_API_PATH = "/core/api/jeeApi.php"

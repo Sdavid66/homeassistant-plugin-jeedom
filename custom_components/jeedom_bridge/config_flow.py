@@ -19,6 +19,8 @@ from .const import (
     CONF_PLUGIN_KEY_EDISIO,
     CONF_PLUGIN_KEY_ZWAVE,
     CONF_PLUGIN_KEY_VIRTUEL,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
 
@@ -173,6 +175,10 @@ class JeedomBridgeOptionsFlow(config_entries.OptionsFlow):
                     CONF_PLUGIN_KEY_VIRTUEL,
                     default=current.get(CONF_PLUGIN_KEY_VIRTUEL, ""),
                 ): str,
+                vol.Optional(
+                    CONF_SCAN_INTERVAL,
+                    default=current.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                ): vol.All(vol.Coerce(int), vol.Range(min=10)),
             }
         )
 

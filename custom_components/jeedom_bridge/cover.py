@@ -150,6 +150,8 @@ class JeedomCoverEntity(CoordinatorEntity[JeedomCoordinator], CoverEntity):
             )
         _LOGGER.debug("Opening cover %s (cmd_id=%s)", dev.name, dev.cmd_open_id)
         await self._call_cmd(dev.cmd_open_id)
+        dev.current_state = "1"
+        self.async_write_ha_state()
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close (lower) the cover."""
@@ -160,6 +162,8 @@ class JeedomCoverEntity(CoordinatorEntity[JeedomCoordinator], CoverEntity):
             )
         _LOGGER.debug("Closing cover %s (cmd_id=%s)", dev.name, dev.cmd_close_id)
         await self._call_cmd(dev.cmd_close_id)
+        dev.current_state = "0"
+        self.async_write_ha_state()
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
@@ -175,4 +179,3 @@ class JeedomCoverEntity(CoordinatorEntity[JeedomCoordinator], CoverEntity):
             raise HomeAssistantError(
                 f"Jeedom API error while executing cmd {cmd_id}: {err}"
             ) from err
-        await self.coordinator.async_request_refresh()

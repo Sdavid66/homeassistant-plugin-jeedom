@@ -17,6 +17,8 @@ from .const import (
     DATA_PLUGIN_CLIENTS,
     DOMAIN,
     PLATFORMS,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
 )
 from .coordinator import JeedomCoordinator
 
@@ -84,7 +86,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
     # ── Coordinator ───────────────────────────────────────────────────────────
-    coordinator = JeedomCoordinator(hass, client, plugin_clients)
+    scan_interval = entry.options.get(
+        CONF_SCAN_INTERVAL,
+        entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+    )
+    coordinator = JeedomCoordinator(hass, client, plugin_clients, scan_interval)
 
     # Use async_refresh() instead of async_config_entry_first_refresh() so that
     # a failure on first load logs a warning but does NOT raise ConfigEntryNotReady
@@ -117,6 +123,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         len(coordinator.data or {}),
         len(plugin_clients),
     )
+    
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    
     return True
 
 
@@ -143,3 +152,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.warning("Jeedom Bridge entry %s unloaded with errors (check logs).", entry.entry_id)
 
     return unload_ok
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload config entry when options change."""
+    await hass.config_entries.async_reload(entry.entry_id)

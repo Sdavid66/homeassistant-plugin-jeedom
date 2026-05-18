@@ -36,7 +36,8 @@
         "data": {
           "plugin_key_edisio":  "Edisio plugin API key",
           "plugin_key_zwave":   "Z-Wave plugin API key",
-          "plugin_key_virtuel": "Virtual plugin API key"
+          "plugin_key_virtuel": "Virtual plugin API key",
+          "scan_interval": "Background refresh interval (seconds)"
         }
       }
     }

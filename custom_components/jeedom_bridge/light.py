@@ -179,6 +179,8 @@ class JeedomLightEntity(CoordinatorEntity[JeedomCoordinator], LightEntity):
                 dev.name, jeedom_val, dev.cmd_slider_id,
             )
             await self._call_cmd(dev.cmd_slider_id, {"slider": jeedom_val})
+            dev.current_state = str(jeedom_val)
+            self.async_write_ha_state()
             return
 
         # Simple ON
@@ -188,6 +190,8 @@ class JeedomLightEntity(CoordinatorEntity[JeedomCoordinator], LightEntity):
             )
         _LOGGER.debug("Turning on %s (cmd_id=%s)", dev.name, dev.cmd_on_id)
         await self._call_cmd(dev.cmd_on_id)
+        dev.current_state = "100" if dev.supports_brightness else "1"
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
@@ -198,6 +202,8 @@ class JeedomLightEntity(CoordinatorEntity[JeedomCoordinator], LightEntity):
             )
         _LOGGER.debug("Turning off %s (cmd_id=%s)", dev.name, dev.cmd_off_id)
         await self._call_cmd(dev.cmd_off_id)
+        dev.current_state = "0"
+        self.async_write_ha_state()
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
@@ -224,5 +230,3 @@ class JeedomLightEntity(CoordinatorEntity[JeedomCoordinator], LightEntity):
                 f"Jeedom API error while executing cmd {cmd_id}: {err}"
             ) from err
 
-        # Request an immediate refresh so the UI reflects the new state quickly
-        await self.coordinator.async_request_refresh()

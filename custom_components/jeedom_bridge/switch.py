@@ -127,6 +127,8 @@ class JeedomSwitchEntity(CoordinatorEntity[JeedomCoordinator], SwitchEntity):
             )
         _LOGGER.debug("Turning on switch %s (cmd_id=%s)", dev.name, dev.cmd_on_id)
         await self._call_cmd(dev.cmd_on_id)
+        dev.current_state = "1"
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         dev = self._current_device or self._device
@@ -136,6 +138,8 @@ class JeedomSwitchEntity(CoordinatorEntity[JeedomCoordinator], SwitchEntity):
             )
         _LOGGER.debug("Turning off switch %s (cmd_id=%s)", dev.name, dev.cmd_off_id)
         await self._call_cmd(dev.cmd_off_id)
+        dev.current_state = "0"
+        self.async_write_ha_state()
 
     async def _call_cmd(self, cmd_id: str) -> None:
         try:
@@ -148,4 +152,3 @@ class JeedomSwitchEntity(CoordinatorEntity[JeedomCoordinator], SwitchEntity):
             raise HomeAssistantError(
                 f"Jeedom API error while executing cmd {cmd_id}: {err}"
             ) from err
-        await self.coordinator.async_request_refresh()

@@ -451,12 +451,13 @@ class JeedomCoordinator(DataUpdateCoordinator[dict[str, JeedomDevice]]):
         hass: HomeAssistant,
         client: JeedomApiClient,
         plugin_clients: dict[str, JeedomPluginApiClient] | None = None,
+        scan_interval: int = DEFAULT_SCAN_INTERVAL,
     ) -> None:
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+            update_interval=timedelta(seconds=scan_interval),
         )
         self.api = client
         self.plugin_clients: dict[str, JeedomPluginApiClient] = plugin_clients or {}
