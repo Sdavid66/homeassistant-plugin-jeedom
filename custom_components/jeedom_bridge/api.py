@@ -11,6 +11,9 @@ from .const import (
     JEEDOM_API_VERSION,
     METHOD_EQLOGIC_ALL,
     METHOD_CMD_EXECUTE,
+    CONF_PLUGIN_KEY_EDISIO,
+    CONF_PLUGIN_KEY_ZWAVE,
+    CONF_PLUGIN_KEY_VIRTUEL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,7 +35,7 @@ class JeedomAuthError(Exception):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# API Client
+# API Client — global Jeedom core
 # ─────────────────────────────────────────────────────────────────────────────
 
 class JeedomApiClient:
@@ -139,3 +142,103 @@ class JeedomApiClient:
             METHOD_CMD_EXECUTE,
             extra_params={"id": str(cmd_id), "options": options},
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Plugin-specific API client
+# ─────────────────────────────────────────────────────────────────────────────
+
+class JeedomPluginApiClient(JeedomApiClient):
+    """
+    API client targeting a Jeedom plugin's own JSON-RPC endpoint.
+
+    Each Jeedom plugin exposes its API at:
+        /plugins/<plugin_id>/core/api/jeeApi.php
+    with its own dedicated API key.
+    """
+
+    PLUGIN_API_PATH_TEMPLATE = "/plugins/{plugin_id}/core/api/jeeApi.php"
+
+    def __init__(
+        self,
+        session: ClientSession,
+        base_url: str,
+        plugin_id: str,
+        plugin_api_key: str,
+    ) -> None:
+        super().__init__(session=session, base_url=base_url, api_key=plugin_api_key)
+        self.plugin_id = plugin_id
+        self._endpoint = (
+            f"{self._base_url}"
+            f"{self.PLUGIN_API_PATH_TEMPLATE.format(plugin_id=plugin_id)}"
+        )
+
+    async def async_test_plugin_connection(self) -> bool:
+        """
+        Test connectivity to this plugin's API endpoint.
+        Sends a simple eqLogic::all probe; returns True if reachable.
+        Logs a warning (instead of raising) so one bad plugin does not
+        block the whole integration setup.
+        """
+        try:
+            await self._request(METHOD_EQLOGIC_ALL)
+            return True
+        except (JeedomAuthError, JeedomApiError, JeedomConnectionError) as err:
+            _LOGGER.warning(
+                "Plugin '%s' API test failed (%s): %s",
+                self.plugin_id, type(err).__name__, err,
+            )
+            return False
+
+    async def async_get_plugin_eqlogics(self) -> list[dict[str, Any]]:
+        """Return eqLogics exposed by this specific plugin."""
+        try:
+            result = await self._request(METHOD_EQLOGIC_ALL)
+        except (JeedomAuthError, JeedomApiError, JeedomConnectionError) as err:
+            _LOGGER.warning(
+                "Cannot fetch eqLogics from plugin '%s': %s", self.plugin_id, err
+            )
+            return []
+        if not isinstance(result, list):
+            _LOGGER.warning(
+                "Plugin '%s' eqLogic::all returned unexpected type: %s",
+                self.plugin_id, type(result),
+            )
+            return []
+        return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Factory — build plugin clients from config entry data
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Map: config key → plugin_id used in the Jeedom URL path
+_PLUGIN_KEY_MAP: dict[str, str] = {
+    CONF_PLUGIN_KEY_EDISIO:  "edisio",
+    CONF_PLUGIN_KEY_ZWAVE:   "zwave",
+    CONF_PLUGIN_KEY_VIRTUEL: "virtuel",
+}
+
+
+def build_plugin_clients(
+    session: ClientSession,
+    base_url: str,
+    entry_data: dict[str, Any],
+) -> dict[str, JeedomPluginApiClient]:
+    """
+    Return a dict of ``{plugin_id: JeedomPluginApiClient}`` for every plugin
+    whose API key was supplied in *entry_data*.  Keys with empty values are
+    silently skipped.
+    """
+    clients: dict[str, JeedomPluginApiClient] = {}
+    for conf_key, plugin_id in _PLUGIN_KEY_MAP.items():
+        key = entry_data.get(conf_key, "").strip()
+        if key:
+            clients[plugin_id] = JeedomPluginApiClient(
+                session=session,
+                base_url=base_url,
+                plugin_id=plugin_id,
+                plugin_api_key=key,
+            )
+            _LOGGER.debug("Plugin client created for '%s'", plugin_id)
+    return clients

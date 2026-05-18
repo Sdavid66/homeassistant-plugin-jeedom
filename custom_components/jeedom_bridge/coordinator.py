@@ -8,7 +8,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import JeedomApiClient, JeedomApiError, JeedomConnectionError
+from .api import JeedomApiClient, JeedomApiError, JeedomConnectionError, JeedomPluginApiClient
 from .const import (
     CMD_SUBTYPE_SLIDER,
     CMD_TYPE_ACTION,
@@ -121,16 +121,28 @@ def _find_cmd(
     return None
 
 
-def _parse_eqlogic(raw: dict[str, Any]) -> JeedomDevice | None:
+def _parse_eqlogic(
+    raw: dict[str, Any],
+    forced_plugin_id: str | None = None,
+) -> JeedomDevice | None:
     """
     Parse a raw eqLogic dict from Jeedom into a JeedomDevice.
     Returns None for inactive or unusable devices.
+
+    ``forced_plugin_id`` is used when fetching from a plugin API directly so
+    the device is always tagged with the correct plugin, even if the raw
+    payload omits or misreports ``eqType_name``.
     """
     try:
         eq_id = str(raw["id"])
         name: str = raw.get("name", f"Device {eq_id}")
         is_active: bool = str(raw.get("isEnable", "1")) == "1"
-        plugin_id: str = raw.get("eqType_name", "") or raw.get("plugin", "") or ""
+        plugin_id: str = (
+            forced_plugin_id
+            or raw.get("eqType_name", "")
+            or raw.get("plugin", "")
+            or ""
+        )
         # Jeedom categories may differ across versions.
         # In some Jeedom v3 builds, 'category' is returned as a dict
         # (e.g. {"light": "1", "heating": "0"}) rather than a plain string.
@@ -192,7 +204,12 @@ class JeedomCoordinator(DataUpdateCoordinator[dict[str, JeedomDevice]]):
     expose un dictionnaire ``{eq_id: JeedomDevice}`` à toutes les plateformes.
     """
 
-    def __init__(self, hass: HomeAssistant, client: JeedomApiClient) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        client: JeedomApiClient,
+        plugin_clients: dict[str, JeedomPluginApiClient] | None = None,
+    ) -> None:
         super().__init__(
             hass,
             _LOGGER,
@@ -200,9 +217,11 @@ class JeedomCoordinator(DataUpdateCoordinator[dict[str, JeedomDevice]]):
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
         self.api = client
+        self.plugin_clients: dict[str, JeedomPluginApiClient] = plugin_clients or {}
 
     async def _async_update_data(self) -> dict[str, JeedomDevice]:
-        """Fetch the full device list and return it indexed by eq_id."""
+        """Fetch devices from the global API and all configured plugin APIs."""
+        # ── 1. Global Jeedom API ──────────────────────────────────────────────
         try:
             raw_list = await self.api.async_get_all_eqlogics()
         except JeedomConnectionError as err:
@@ -213,18 +232,38 @@ class JeedomCoordinator(DataUpdateCoordinator[dict[str, JeedomDevice]]):
         devices: dict[str, JeedomDevice] = {}
         for raw in raw_list:
             device = _parse_eqlogic(raw)
-            if device is None:
-                continue
-            if not device.is_active:
-                _LOGGER.debug("Skipping inactive device %s (%s)", device.eq_id, device.name)
-                continue
-            if device.cmd_on_id is None and device.cmd_off_id is None:
-                _LOGGER.debug(
-                    "Skipping device %s (%s): no on/off commands found",
-                    device.eq_id, device.name,
-                )
-                continue
-            devices[device.eq_id] = device
+            if device is not None and self._is_usable(device):
+                devices[device.eq_id] = device
+
+        # ── 2. Plugin-specific APIs (non-blocking) ────────────────────────────
+        for plugin_id, plugin_client in self.plugin_clients.items():
+            plugin_raws = await plugin_client.async_get_plugin_eqlogics()
+            new_count = 0
+            for raw in plugin_raws:
+                # Force the plugin_id so categorisation is always correct
+                device = _parse_eqlogic(raw, forced_plugin_id=plugin_id)
+                if device is not None and self._is_usable(device):
+                    # Plugin API may return devices already present in global API;
+                    # plugin version wins (richer data / correct plugin tag).
+                    devices[device.eq_id] = device
+                    new_count += 1
+            _LOGGER.debug(
+                "Plugin '%s': %d usable device(s) loaded", plugin_id, new_count
+            )
 
         _LOGGER.debug("Coordinator updated: %d controllable devices found", len(devices))
         return devices
+
+    @staticmethod
+    def _is_usable(device: JeedomDevice) -> bool:
+        """Return True if the device should be exposed as an entity."""
+        if not device.is_active:
+            _LOGGER.debug("Skipping inactive device %s (%s)", device.eq_id, device.name)
+            return False
+        if device.cmd_on_id is None and device.cmd_off_id is None:
+            _LOGGER.debug(
+                "Skipping device %s (%s): no on/off commands found",
+                device.eq_id, device.name,
+            )
+            return False
+        return True

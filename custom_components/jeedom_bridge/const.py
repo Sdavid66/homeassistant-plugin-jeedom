@@ -6,6 +6,12 @@ DOMAIN = "jeedom_bridge"
 CONF_JEEDOM_URL = "jeedom_url"
 CONF_API_KEY = "api_key"
 
+# ── Plugin API keys (optional) ────────────────────────────────────────────────
+CONF_PLUGIN_API_KEYS = "plugin_api_keys"       # dict: plugin_id → api_key
+CONF_PLUGIN_KEY_EDISIO  = "plugin_key_edisio"
+CONF_PLUGIN_KEY_ZWAVE   = "plugin_key_zwave"
+CONF_PLUGIN_KEY_VIRTUEL = "plugin_key_virtuel"
+
 # ── Defaults ──────────────────────────────────────────────────────────────────
 DEFAULT_SCAN_INTERVAL = 30  # seconds
 
@@ -29,9 +35,10 @@ CMD_SUBTYPE_SLIDER = "slider"
 CMD_SUBTYPE_OTHER = "other"
 
 # ── Category / plugin tags considered as lights ───────────────────────────────
-LIGHT_PLUGINS = {"light", "zwave", "zigbee", "philips_hue", "ikea", "hue"}
+LIGHT_PLUGINS = {"light", "zwave", "zigbee", "philips_hue", "ikea", "hue", "edisio"}
 LIGHT_CATEGORIES = {"light", "lights", "lumière", "lumières", "éclairage", "eclairage"}
 
-# ── Internal data keys stored in config entry ─────────────────────────────────
+# ── Internal data keys stored in hass.data ────────────────────────────────────
 DATA_COORDINATOR = "coordinator"
 DATA_API = "api"
+DATA_PLUGIN_CLIENTS = "plugin_clients"  # dict: plugin_id → JeedomApiClient
