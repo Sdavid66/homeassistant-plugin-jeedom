@@ -9,7 +9,7 @@ from aiohttp import ClientSession, ClientError, ClientResponseError
 from .const import (
     JEEDOM_API_PATH,
     JEEDOM_API_VERSION,
-    METHOD_EQLOGIC_ALL,
+    METHOD_OBJECT_FULL,
     METHOD_CMD_EXECUTE,
     METHOD_CMD_BY_EQLOGIC,
     CONF_PLUGIN_KEY_EDISIO,
@@ -111,17 +111,23 @@ class JeedomApiClient:
     # ── High-level helpers ────────────────────────────────────────────────────
 
     async def async_test_connection(self) -> bool:
-        """Validate URL + API key by fetching all eqLogics."""
-        await self._request(METHOD_EQLOGIC_ALL)
+        """Validate URL + API key by fetching all objects."""
+        await self._request(METHOD_OBJECT_FULL)
         return True
 
     async def async_get_all_eqlogics(self) -> list[dict[str, Any]]:
         """Return the full list of active eqLogic objects from Jeedom."""
-        result = await self._request(METHOD_EQLOGIC_ALL)
+        result = await self._request(METHOD_OBJECT_FULL)
         if not isinstance(result, list):
-            _LOGGER.warning("eqLogic::all returned unexpected type: %s", type(result))
+            _LOGGER.warning("jeeObject::full returned unexpected type: %s", type(result))
             return []
-        return result
+        
+        eqlogics = []
+        for obj in result:
+            if isinstance(obj, dict) and "eqLogics" in obj and isinstance(obj["eqLogics"], list):
+                eqlogics.extend(obj["eqLogics"])
+                
+        return eqlogics
 
     async def async_get_cmds_by_eqlogic(self, eq_id: str | int) -> list[dict[str, Any]]:
         """
@@ -194,12 +200,12 @@ class JeedomPluginApiClient(JeedomApiClient):
     async def async_test_plugin_connection(self) -> bool:
         """
         Test connectivity to this plugin's API endpoint.
-        Sends a simple eqLogic::all probe; returns True if reachable.
+        Sends a simple probe; returns True if reachable.
         Logs a warning (instead of raising) so one bad plugin does not
         block the whole integration setup.
         """
         try:
-            await self._request(METHOD_EQLOGIC_ALL)
+            await self._request(METHOD_OBJECT_FULL)
             return True
         except (JeedomAuthError, JeedomApiError, JeedomConnectionError) as err:
             _LOGGER.warning(
@@ -211,19 +217,26 @@ class JeedomPluginApiClient(JeedomApiClient):
     async def async_get_plugin_eqlogics(self) -> list[dict[str, Any]]:
         """Return eqLogics exposed by this specific plugin."""
         try:
-            result = await self._request(METHOD_EQLOGIC_ALL)
+            result = await self._request(METHOD_OBJECT_FULL)
         except (JeedomAuthError, JeedomApiError, JeedomConnectionError) as err:
             _LOGGER.warning(
                 "Cannot fetch eqLogics from plugin '%s': %s", self.plugin_id, err
             )
             return []
+            
         if not isinstance(result, list):
             _LOGGER.warning(
-                "Plugin '%s' eqLogic::all returned unexpected type: %s",
+                "Plugin '%s' jeeObject::full returned unexpected type: %s",
                 self.plugin_id, type(result),
             )
             return []
-        return result
+            
+        eqlogics = []
+        for obj in result:
+            if isinstance(obj, dict) and "eqLogics" in obj and isinstance(obj["eqLogics"], list):
+                eqlogics.extend(obj["eqLogics"])
+                
+        return eqlogics
 
 
 # ─────────────────────────────────────────────────────────────────────────────

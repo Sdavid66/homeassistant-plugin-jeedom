@@ -20,7 +20,7 @@ JEEDOM_API_PATH = "/core/api/jeeApi.php"
 JEEDOM_API_VERSION = "2.0"
 
 # Methods
-METHOD_EQLOGIC_ALL = "eqLogic::all"
+METHOD_OBJECT_FULL = "jeeObject::full"
 METHOD_CMD_EXECUTE = "cmd::execCmd"
 METHOD_CMD_GETVALUE = "cmd::byId"
 METHOD_CMD_BY_EQLOGIC = "cmd::byEqLogicId"  # fetch all cmds of a given eqLogic
